@@ -7,31 +7,75 @@ class MailPresenter < SimpleDelegator
     @account = account
   end
 
+  def
+
   def subject
     encode_to_unicode(@mail.subject || '')
   end
 
-  def text_content
-    @decoded_text_content ||= encode_to_unicode(text_part&.decoded || decoded_message || '')
+  def message_content
+    @decoded_text_content = select_body(mail)
+    encoding = @decoded_text_content.encoding
 
-    return {} if @decoded_text_content.blank?
+    body = EmailReplyTrimmer.trim(@decoded_text_content)
+
+    # Add quoted_text logic here
 
     @text_content ||= {
       full: @decoded_text_content,
-      reply: extract_reply(@decoded_text_content)[:reply],
-      quoted: extract_reply(@decoded_text_content)[:quoted_text]
+      reply: @decoded_text_content,
+      quoted: body.force_encoding(encoding).encode("UTF-8")
     }
   end
+
+  def select_body(message)
+    if message.multipart?
+      part = message.text_part || message.html_part || message
+    else
+      part = message
+    end
+
+    decoded = encode_to_unicode(part)
+
+    return "" unless decoded
+
+    # Certain trigger phrases that means we didn't parse correctly
+    if decoded =~ /(Content\-Type\:|multipart\/alternative|text\/plain)/
+      return ""
+    end
+
+    if (part.content_type || '').include? 'text/html'
+      HTMLParser.parse_reply(decoded)
+    else
+      decoded
+    end
+  end
+
+
+
+  # def text_content
+  #   @decoded_text_content ||= encode_to_unicode(text_part&.decoded || decoded_message || '')
+
+  #   return {} if @decoded_text_content.blank?
+
+  #   @text_content ||= {
+  #     full: @decoded_text_content,
+  #     reply: extract_reply(@decoded_text_content)[:reply],
+  #     quoted: extract_reply(@decoded_text_content)[:quoted_text]
+  #   }
+  # end
 
   def html_content
     @decoded_html_content ||= encode_to_unicode(html_part&.decoded)
 
     return {} if @decoded_html_content.blank?
 
+    body = EmailReplyTrimmer.trim(@decoded_html_content)
+
     @html_content ||= {
       full: @decoded_html_content,
-      reply: extract_reply(@decoded_html_content)[:reply],
-      quoted: extract_reply(@decoded_html_content)[:quoted_text]
+      reply: @decoded_html_content,
+      quoted: body
     }
   end
 
@@ -47,13 +91,13 @@ class MailPresenter < SimpleDelegator
     end
   end
 
-  def decoded_message
-    if mail.multipart?
-      return mail.text_part ? mail.text_part.decoded : nil
-    end
+  # def decoded_message
+  #   if mail.multipart?
+  #     return mail.text_part ? mail.text_part.decoded : nil
+  #   end
 
-    mail.decoded
-  end
+  #   mail.decoded
+  # end
 
   def number_of_attachments
     mail.attachments.count
@@ -72,7 +116,7 @@ class MailPresenter < SimpleDelegator
       multipart: multipart?,
       number_of_attachments: number_of_attachments,
       subject: subject,
-      text_content: text_content,
+      text_content: message_content,
       to: to
     }
   end
@@ -107,29 +151,24 @@ class MailPresenter < SimpleDelegator
   private
 
   # forcing the encoding of the content to UTF-8 so as to be compatible with database and serializers
-  def  encode_to_unicode(str)
-    return '' if str.blank?
+  def encode_to_unicode(decoded_mail)
+    return nil if decoded_mail.nil?
 
-    current_encoding = str.encoding.name
-    return str if current_encoding == 'UTF-8'
-
-    str.encode(current_encoding, 'UTF-8', invalid: :replace, undef: :replace, replace: '?')
+    if decoded_mail.charset
+      decoded_mail.body.decoded.force_encoding(decoded_mail.charset.gsub(/utf8/i, "UTF-8")).encode("UTF-8").to_s
+    else
+      decoded_mail.body.to_s
+    end
+  rescue
+    nil
   end
 
   def extract_reply(content)
-    @regex_arr ||= quoted_text_regexes
-
-    content_length = content.length
-    # calculates the matching regex closest to top of page
-    index = @regex_arr.inject(content_length) do |min, regex|
-      [(content.index(regex) || content_length), min].min
-    end
     content_body = EmailReplyTrimmer.trim(content)
-    content_length = content.length
 
     {
-      reply: content[0..(index - 1)].strip,
-      quoted_text: content[index..].strip
+      reply: content_body,
+      quoted_text: content_body
     }
   end
 

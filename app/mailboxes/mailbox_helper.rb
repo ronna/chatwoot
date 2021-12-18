@@ -5,7 +5,7 @@ module MailboxHelper
     @message = @conversation.messages.create(
       account_id: @conversation.account_id,
       sender: @conversation.contact,
-      content: processed_mail.text_content[:reply],
+      content: processed_mail.message_content[:reply],
       inbox_id: @conversation.inbox_id,
       message_type: 'incoming',
       content_type: 'incoming_email',
